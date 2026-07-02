@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<!-- スマホで見やすくするための設定。画面幅に合わせて拡大縮小する -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>健康記録</title>
+<style>
+  /* ============================================================
+     見た目（CSS）。色や配置をここでまとめて決めています。
+     ライトモード／ダークモードの両方に自動対応します。
+     ============================================================ */
+  :root{
+    --bg:#f4f6f8;          /* 背景色 */
+    --card:#ffffff;        /* カードの背景色 */
+    --text:#1c2430;        /* 文字色 */
+    --muted:#6b7684;       /* 薄い文字色 */
+    --line:#e4e8ec;        /* 罫線の色 */
+    --accent:#2fa37a;      /* テーマカラー（健康的な緑） */
+    --accent-weak:#e3f3ec; /* テーマカラーの薄い版 */
+    --danger:#d9534f;      /* 注意・削除の色 */
+    --shadow:0 1px 3px rgba(0,0,0,.08),0 6px 18px rgba(0,0,0,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#12161c; --card:#1b2129; --text:#e7ecf2; --muted:#93a0b0;
+      --line:#2a323d; --accent:#3bbf90; --accent-weak:#1e2f2a;
+      --shadow:0 1px 3px rgba(0,0,0,.4),0 6px 18px rgba(0,0,0,.3);
+    }
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",system-ui,sans-serif;
+    line-height:1.6; padding:16px 14px 60px;
+  }
+  .wrap{ max-width:600px; margin:0 auto; }
+  h1{ font-size:20px; margin:4px 0 2px; }
+  .sub{ color:var(--muted); font-size:13px; margin:0 0 16px; }
+
+  /* カード（各セクションの枠） */
+  .card{
+    background:var(--card); border-radius:16px; padding:16px 16px 18px;
+    box-shadow:var(--shadow); margin-bottom:16px;
+  }
+  .card h2{ font-size:15px; margin:0 0 12px; display:flex; align-items:center; gap:8px; }
+  .card h2 .tag{ font-size:11px; color:var(--muted); font-weight:normal; }
+
+  /* 日付の表示・入力 */
+  .daterow{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  input[type="date"]{
+    font-size:16px; padding:8px 10px; border:1px solid var(--line);
+    border-radius:10px; background:var(--card); color:var(--text);
+  }
+  .badge{ font-size:12px; padding:3px 10px; border-radius:999px;
+    background:var(--accent-weak); color:var(--accent); font-weight:600; }
+
+  /* 統計（連続記録など） */
+  .stats{ display:flex; gap:10px; }
+  .stat{ flex:1; text-align:center; background:var(--card);
+    border:1px solid var(--line); border-radius:14px; padding:12px 8px; }
+  .stat .num{ font-size:26px; font-weight:700; color:var(--accent); }
+  .stat .lbl{ font-size:12px; color:var(--muted); }
+
+  /* 運動チェックのボタン（タップで選ぶ） */
+  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .toggle{
+    border:1.5px solid var(--line); background:var(--card); color:var(--text);
+    border-radius:12px; padding:14px 10px; font-size:15px; font-weight:600;
+    cursor:pointer; text-align:center; transition:all .12s; min-height:52px;
+  }
+  .toggle:active{ transform:scale(.97); }
+  .toggle.on{ background:var(--accent); border-color:var(--accent); color:#fff; }
+
+  /* 有酸素運動の時間チップ */
+  .chips{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .chip{
+    border:1.5px solid var(--line); background:var(--card); color:var(--text);
+    border-radius:999px; padding:8px 14px; font-size:14px; cursor:pointer; font-weight:600;
+  }
+  .chip.on{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  .field-label{ font-size:13px; color:var(--muted); margin:2px 0 2px; }
+
+  /* 採点スライダー */
+  .slider-block{ margin:6px 0 20px; }
+  .slider-top{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:2px; }
+  .slider-top .name{ font-size:15px; font-weight:600; }
+  .slider-top .val{ font-size:20px; font-weight:700; color:var(--accent); min-width:24px; text-align:right; }
+  input[type="range"]{ width:100%; accent-color:var(--accent); height:30px; }
+  .ends{ display:flex; justify-content:space-between; font-size:11.5px; color:var(--muted); }
+
+  /* ボタン類 */
+  .btn{
+    display:block; width:100%; border:none; border-radius:14px; padding:16px;
+    font-size:17px; font-weight:700; cursor:pointer; background:var(--accent); color:#fff;
+  }
+  .btn:active{ opacity:.85; }
+  .btn.ghost{ background:var(--card); color:var(--text); border:1.5px solid var(--line); font-size:15px; padding:13px; }
+
+  /* 履歴の一覧 */
+  .rec{ display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--line); }
+  .rec:first-child{ border-top:none; }
+  .rec .d{ font-size:13px; font-weight:600; width:80px; }
+  .rec .s{ flex:1; font-size:12.5px; color:var(--muted); }
+  .rec .del{ background:none; border:none; color:var(--muted); font-size:13px; cursor:pointer; padding:6px; }
+  .empty{ color:var(--muted); font-size:14px; text-align:center; padding:14px 0; }
+
+  /* 運動ガイド（折りたたみ） */
+  details{ border-top:1px solid var(--line); padding:10px 0; }
+  details:first-of-type{ border-top:none; }
+  summary{ font-size:15px; font-weight:600; cursor:pointer; list-style:none; }
+  summary::-webkit-details-marker{ display:none; }
+  summary::before{ content:"＋ "; color:var(--accent); }
+  details[open] summary::before{ content:"− "; }
+  .guide-body{ font-size:13.5px; color:var(--muted); margin:8px 0 4px; padding-left:2px; }
+
+  .toast{
+    position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(20px);
+    background:var(--text); color:var(--bg); padding:12px 22px; border-radius:999px;
+    font-size:14px; font-weight:600; opacity:0; pointer-events:none; transition:all .25s; z-index:9;
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+  .note{ font-size:12px; color:var(--muted); margin-top:10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>健康記録</h1>
+  <p class="sub">猫背・頭痛の改善と、お腹まわりの引き締めのための記録アプリ。タップとスライダーだけで記録できます。</p>
+
+  <!-- 連続記録などの統計 -->
+  <div class="stats" style="margin-bottom:16px;">
+    <div class="stat"><div class="num" id="streak">0</div><div class="lbl">連続記録（日）</div></div>
+    <div class="stat"><div class="num" id="total">0</div><div class="lbl">記録した日数</div></div>
+  </div>
+
+  <!-- ============ 今日の記録 ============ -->
+  <div class="card">
+    <h2>今日の記録 <span class="tag" id="editTag"></span></h2>
+
+    <div class="daterow" style="margin-bottom:16px;">
+      <input type="date" id="date">
+      <span class="badge" id="savedBadge" style="display:none;">記録済み</span>
+    </div>
+
+    <!-- 運動チェック -->
+    <div class="field-label">やった運動をタップ</div>
+    <div class="grid" id="exGrid"></div>
+
+    <!-- 有酸素運動の時間 -->
+    <div class="field-label" style="margin-top:16px;">有酸素運動の時間（ウォーキング等）</div>
+    <div class="chips" id="aeroChips"></div>
+
+    <!-- 採点スライダー -->
+    <div style="margin-top:22px;">
+      <div class="field-label" style="margin-bottom:8px;">今日の調子を採点（指でスライド）</div>
+      <div id="sliders"></div>
+    </div>
+
+    <button class="btn" id="saveBtn">保存する</button>
+    <p class="note">保存すると、この端末のブラウザに自動で記録されます。同じ日付でもう一度保存すると上書きされます。</p>
+  </div>
+
+  <!-- ============ 履歴 ============ -->
+  <div class="card">
+    <h2>これまでの記録</h2>
+    <div id="history"></div>
+  </div>
+
+  <!-- ============ バックアップ ============ -->
+  <div class="card">
+    <h2>バックアップ <span class="tag">大事なデータを守る</span></h2>
+    <button class="btn ghost" id="exportBtn">CSVファイルに書き出す（Excelで開ける）</button>
+    <p class="note">ブラウザのデータを消すと記録も消えます。ときどきこのボタンでファイルに保存しておくと安心です。将来グラフを作るときにも使えます。</p>
+  </div>
+
+  <!-- ============ 運動ガイド ============ -->
+  <div class="card">
+    <h2>運動ガイド <span class="tag">やり方の確認</span></h2>
+    <div id="guide"></div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================
+   動きの部分（JavaScript）。
+   データはブラウザ内（localStorage）に保存します。
+   ============================================================ */
+
+// 保存に使う名前（バージョン管理のため v1 を付けています）
+const STORE_KEY = "kenko_records_v1";
+
+// 運動の種目リスト（idは保存用、labelは表示用）
+const EXERCISES = [
+  { id:"squat",   label:"スクワット" },
+  { id:"hip",     label:"ヒップリフト" },
+  { id:"plank",   label:"プランク" },
+  { id:"deadbug", label:"デッドバグ" },
+  { id:"backext", label:"バックエクステンション" },
+  { id:"birddog", label:"バードドッグ" },
+  { id:"scapula", label:"肩甲骨寄せ" },
+  { id:"stretch", label:"ストレッチ" },
+];
+
+// 有酸素運動の時間の選択肢（分）
+const AERO_OPTIONS = [0, 20, 30, 40, 60];
+
+// 採点スライダーの定義。0〜5で採点します。
+const SCORES = [
+  { id:"belly",    name:"お腹スリム感", low:"ぽっこり", high:"スッキリ", def:3 },
+  { id:"posture",  name:"姿勢",         low:"猫背がひどい", high:"背筋が伸びている", def:3 },
+  { id:"headache", name:"頭痛",         low:"なし", high:"かなりつらい", def:0 },
+];
+
+// 運動ガイドの説明文（調べた内容を反映）
+const GUIDE = [
+  { t:"スクワット（下半身）", b:"足を肩幅に開き、お尻を後ろに引くように腰を落とす。10〜15回×3セット。膝がつま先より前に出すぎないよう注意。" },
+  { t:"ヒップリフト（お尻・下半身）", b:"仰向けで膝を立て、お尻を持ち上げて体を一直線に。15回×3セット。お尻をしっかり締めるのがポイント。" },
+  { t:"プランク（お腹・体幹）", b:"うつ伏せで肘とつま先で体を支え、頭からかかとまで一直線をキープ。30秒×3セット。腰が落ちないように。" },
+  { t:"デッドバグ（お腹・体幹）", b:"仰向けで手足を天井へ。対角の手と足をゆっくり伸ばして戻す。左右で10回×3セット。腰を床につけたまま行う。" },
+  { t:"バックエクステンション（背筋・猫背対策）", b:"うつ伏せで上体をゆっくり反らせて戻す。10〜15回×3セット。反りすぎず気持ちいい範囲で。" },
+  { t:"バードドッグ（背筋・体幹）", b:"四つ這いで対角の手足を水平に伸ばしてキープ。左右10回×3セット。背中を丸めない。" },
+  { t:"肩甲骨寄せ（猫背・肩こり対策）", b:"タオルを両手で持ち、肩甲骨を寄せるように肘を後ろへ引く。左右の肩甲骨を近づける意識で15回×3セット。" },
+  { t:"ストレッチ（毎日・猫背/頭痛対策）", b:"胸を開く・首まわり・肩甲骨・股関節のストレッチを。1つあたり40秒を目安に。40秒ほど伸ばすと筋肉の血流が安静時の約3倍まで増えるという報告があります。" },
+  { t:"有酸素運動（お腹の脂肪対策）", b:"ウォーキングや軽いジョギングなど。週3〜5回、1回20分以上、「楽だけど少しキツい」中強度が目安。脂肪はお腹だけを狙って落とすのは難しいため、全身の有酸素＋筋トレの組み合わせが効率的です。" },
+];
+
+// --- 画面の要素を取得 ---
+const $ = (id) => document.getElementById(id);
+const dateEl = $("date"), exGrid = $("exGrid"), aeroChips = $("aeroChips");
+const slidersEl = $("sliders"), historyEl = $("history"), guideEl = $("guide");
+
+// 今この瞬間の状態を持っておく変数
+let state = { exercises:{}, aeroMin:0, scores:{} };
+
+// --- データの読み書き ---
+function loadAll(){
+  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; }
+  catch(e){ return {}; }
+}
+function saveAll(obj){ localStorage.setItem(STORE_KEY, JSON.stringify(obj)); }
+
+// 今日の日付を "YYYY-MM-DD" の形で返す（端末の時刻を使用）
+function todayStr(){
+  const d = new Date();
+  const p = (n) => String(n).padStart(2,"0");
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
+}
+
+// --- 画面を組み立てる ---
+function buildForm(){
+  // 運動チェックのボタン
+  exGrid.innerHTML = "";
+  EXERCISES.forEach(ex => {
+    const b = document.createElement("button");
+    b.className = "toggle"; b.textContent = ex.label; b.dataset.id = ex.id;
+    b.onclick = () => {
+      state.exercises[ex.id] = !state.exercises[ex.id];
+      b.classList.toggle("on", state.exercises[ex.id]);
+    };
+    exGrid.appendChild(b);
+  });
+
+  // 有酸素運動の時間チップ
+  aeroChips.innerHTML = "";
+  AERO_OPTIONS.forEach(min => {
+    const c = document.createElement("button");
+    c.className = "chip"; c.textContent = (min===0 ? "なし" : min+"分"); c.dataset.min = min;
+    c.onclick = () => { state.aeroMin = min; refreshAeroChips(); };
+    aeroChips.appendChild(c);
+  });
+
+  // 採点スライダー
+  slidersEl.innerHTML = "";
+  SCORES.forEach(s => {
+    const wrap = document.createElement("div");
+    wrap.className = "slider-block";
+    wrap.innerHTML =
+      '<div class="slider-top"><span class="name">'+s.name+'</span>'+
+      '<span class="val" id="val_'+s.id+'"></span></div>'+
+      '<input type="range" min="0" max="5" step="1" id="rng_'+s.id+'">'+
+      '<div class="ends"><span>'+s.low+'</span><span>'+s.high+'</span></div>';
+    slidersEl.appendChild(wrap);
+    const rng = $("rng_"+s.id);
+    rng.oninput = () => { state.scores[s.id] = Number(rng.value); $("val_"+s.id).textContent = rng.value; };
+  });
+}
+
+// 有酸素チップの選択状態を画面に反映
+function refreshAeroChips(){
+  aeroChips.querySelectorAll(".chip").forEach(c => {
+    c.classList.toggle("on", Number(c.dataset.min) === state.aeroMin);
+  });
+}
+
+// 指定した日付の記録を画面に読み込む（なければ初期値）
+function loadDateIntoForm(dateStr){
+  const all = loadAll();
+  const rec = all[dateStr];
+  // 状態を初期化
+  state = { exercises:{}, aeroMin:0, scores:{} };
+  SCORES.forEach(s => state.scores[s.id] = s.def);
+
+  if(rec){
+    state.exercises = Object.assign({}, rec.exercises);
+    state.aeroMin = rec.aeroMin || 0;
+    state.scores = Object.assign({}, state.scores, rec.scores);
+  }
+
+  // 画面に反映
+  EXERCISES.forEach(ex => {
+    const b = exGrid.querySelector('[data-id="'+ex.id+'"]');
+    b.classList.toggle("on", !!state.exercises[ex.id]);
+  });
+  refreshAeroChips();
+  SCORES.forEach(s => {
+    $("rng_"+s.id).value = state.scores[s.id];
+    $("val_"+s.id).textContent = state.scores[s.id];
+  });
+
+  // 「記録済み」バッジと編集中タグ
+  $("savedBadge").style.display = rec ? "inline-block" : "none";
+  $("editTag").textContent = rec ? "（保存済みの記録を表示中・上書きできます）" : "";
+}
+
+// --- 保存する ---
+function save(){
+  const dateStr = dateEl.value || todayStr();
+  const all = loadAll();
+  all[dateStr] = {
+    exercises: state.exercises,
+    aeroMin: state.aeroMin,
+    scores: state.scores,
+    savedAt: new Date().toISOString(),
+  };
+  saveAll(all);
+  showToast("保存しました");
+  loadDateIntoForm(dateStr);
+  renderStats();
+  renderHistory();
+}
+
+// --- 統計（連続記録・合計）を表示 ---
+function renderStats(){
+  const all = loadAll();
+  const dates = Object.keys(all).sort(); // 古い順
+  $("total").textContent = dates.length;
+
+  // 連続記録：今日から1日ずつさかのぼって記録があるか数える
+  let streak = 0;
+  let d = new Date(todayStr());
+  const has = (dt) => {
+    const p = (n)=>String(n).padStart(2,"0");
+    const key = dt.getFullYear()+"-"+p(dt.getMonth()+1)+"-"+p(dt.getDate());
+    return !!all[key];
+  };
+  // 今日がまだ未記録なら、昨日からの連続を数える
+  if(!has(d)) d.setDate(d.getDate()-1);
+  while(has(d)){ streak++; d.setDate(d.getDate()-1); }
+  $("streak").textContent = streak;
+}
+
+// --- 履歴の一覧を表示 ---
+function renderHistory(){
+  const all = loadAll();
+  const dates = Object.keys(all).sort().reverse(); // 新しい順
+  if(dates.length === 0){
+    historyEl.innerHTML = '<div class="empty">まだ記録がありません。今日から始めましょう。</div>';
+    return;
+  }
+  historyEl.innerHTML = "";
+  dates.forEach(dt => {
+    const rec = all[dt];
+    const exCount = Object.values(rec.exercises||{}).filter(Boolean).length;
+    const sc = rec.scores || {};
+    const aero = rec.aeroMin ? "・有酸素"+rec.aeroMin+"分" : "";
+    const row = document.createElement("div");
+    row.className = "rec";
+    row.innerHTML =
+      '<span class="d">'+fmtDate(dt)+'</span>'+
+      '<span class="s">運動'+exCount+'種'+aero+
+        '　お腹'+val(sc.belly)+'/姿勢'+val(sc.posture)+'/頭痛'+val(sc.headache)+'</span>'+
+      '<button class="del" data-d="'+dt+'">削除</button>';
+    row.querySelector(".del").onclick = () => {
+      if(confirm(fmtDate(dt)+" の記録を削除しますか？")){
+        const a = loadAll(); delete a[dt]; saveAll(a);
+        renderStats(); renderHistory();
+        if(dt === dateEl.value) loadDateIntoForm(dt);
+      }
+    };
+    historyEl.appendChild(row);
+  });
+}
+function val(v){ return (v===undefined||v===null) ? "-" : v; }
+function fmtDate(s){ const [y,m,d]=s.split("-"); return Number(m)+"/"+Number(d); }
+
+// --- 運動ガイドを表示 ---
+function renderGuide(){
+  guideEl.innerHTML = "";
+  GUIDE.forEach(g => {
+    const d = document.createElement("details");
+    d.innerHTML = '<summary>'+g.t+'</summary><div class="guide-body">'+g.b+'</div>';
+    guideEl.appendChild(d);
+  });
+}
+
+// --- CSVに書き出す（バックアップ） ---
+function exportCSV(){
+  const all = loadAll();
+  const dates = Object.keys(all).sort();
+  // 見出し行
+  const head = ["日付", ...EXERCISES.map(e=>e.label), "有酸素運動(分)", "お腹スリム感", "姿勢", "頭痛"];
+  const rows = [head];
+  dates.forEach(dt => {
+    const r = all[dt];
+    const row = [dt];
+    EXERCISES.forEach(e => row.push(r.exercises && r.exercises[e.id] ? 1 : 0));
+    row.push(r.aeroMin || 0);
+    row.push(v(r.scores,"belly"), v(r.scores,"posture"), v(r.scores,"headache"));
+    rows.push(row);
+  });
+  const csv = rows.map(r => r.join(",")).join("\r\n");
+  // Excelでも日本語が文字化けしないよう BOM（先頭の目印）を付ける
+  const blob = new Blob(["﻿"+csv], { type:"text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "健康記録_"+todayStr()+".csv";
+  a.click(); URL.revokeObjectURL(url);
+  showToast("CSVを書き出しました");
+}
+function v(o,k){ return (o && o[k]!==undefined) ? o[k] : ""; }
+
+// --- お知らせ表示 ---
+let toastTimer;
+function showToast(msg){
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=> t.classList.remove("show"), 1800);
+}
+
+// --- 起動時の処理 ---
+buildForm();
+renderGuide();
+dateEl.value = todayStr();
+loadDateIntoForm(dateEl.value);
+renderStats();
+renderHistory();
+
+// 日付を変えたら、その日の記録を読み込む
+dateEl.onchange = () => loadDateIntoForm(dateEl.value);
+$("saveBtn").onclick = save;
+$("exportBtn").onclick = exportCSV;
+</script>
+</body>
+</html>
