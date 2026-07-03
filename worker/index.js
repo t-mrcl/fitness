@@ -7,18 +7,17 @@
  *   公開ページのコードには一切登場させない
  * - 合言葉が正しければ、代わりにGitHubのfitness-dataリポジトリを読み書きする
  *
- * 使い方：
- * 1. Cloudflareのダッシュボードで新しいWorkerを作成し、この内容を貼り付ける
- * 2. Worker の Settings → Variables and Secrets で、以下2つをシークレットとして追加する
- *      GH_TOKEN   : GitHubのfine-grained personal access token
- *                   (fitness-dataリポジトリのContents読み書き権限のみ)
- *      APP_TOKEN  : index.html側と共有する、好きな文字列の合言葉
- * 3. デプロイ後に発行されるURLを index.html の WORKER_URL に設定する
+ * Worker のシークレット（Settings → Variables and Secrets、または wrangler secret put）：
+ *   GH_TOKEN            : GitHubのfine-grainedトークン(fitness-dataのContents読み書きのみ)
+ *   APP_TOKEN           : index.html側と共有する合言葉
+ *   VAPID_PUBLIC_KEY    : プッシュ通知の公開鍵（フェーズ2で使用）
+ *   VAPID_PRIVATE_KEY   : プッシュ通知の秘密鍵（フェーズ2で使用）
  */
 
 const GH_OWNER = "t-mrcl";
 const GH_REPO = "fitness-data";
-const GH_PATH = "records.json";
+const RECORDS_PATH = "records.json";
+const SUBS_PATH = "subscriptions.json";
 
 export default {
   async fetch(request, env) {
@@ -41,52 +40,88 @@ export default {
       return jsonResponse({ ok: false, error: "invalid token" }, 403);
     }
 
-    const ghUrl = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_PATH}`;
-    const ghHeaders = {
-      "Authorization": `Bearer ${env.GH_TOKEN}`,
-      "Accept": "application/vnd.github+json",
-      "Content-Type": "application/json",
-      "User-Agent": "fitness-proxy-worker",
-    };
-
     try {
-      // 1. 現在のrecords.jsonの内容とshaを取得
-      const getRes = await fetch(ghUrl, { headers: ghHeaders });
-      if (!getRes.ok) throw new Error("github get failed: " + getRes.status);
-      const file = await getRes.json();
-      const current = JSON.parse(decodeBase64(file.content));
-
-      // 2. modeに応じて内容を作る
-      //    merge   : 指定した1日分のデータだけ追加・上書き(通常の保存時)
-      //    replace : データ全体を渡された内容で丸ごと置き換える(データ構造の変換時)
-      let updated, message;
-      if (body.mode === "replace") {
-        updated = body.all;
-        message = "データ構造の変換を反映";
-      } else {
-        updated = current;
-        updated[body.date] = body.record;
-        message = body.date + " の記録を更新";
+      if (body.mode === "subscribe") {
+        return await handleSubscribe(body, env);
       }
-
-      // 3. 更新後の内容をコミット
-      const putRes = await fetch(ghUrl, {
-        method: "PUT",
-        headers: ghHeaders,
-        body: JSON.stringify({
-          message,
-          content: encodeBase64(JSON.stringify(updated, null, 2)),
-          sha: file.sha,
-        }),
-      });
-      if (!putRes.ok) throw new Error("github put failed: " + putRes.status);
-
-      return jsonResponse({ ok: true });
+      return await handleRecords(body, env);
     } catch (err) {
       return jsonResponse({ ok: false, error: String(err) }, 502);
     }
   },
 };
+
+// 記録データ(records.json)の追加・上書き・全置換
+async function handleRecords(body, env) {
+  const file = await ghGetFile(RECORDS_PATH, env);
+  const current = file.json || {};
+
+  let updated, message;
+  if (body.mode === "replace") {
+    updated = body.all;
+    message = "データ構造の変換を反映";
+  } else {
+    updated = current;
+    updated[body.date] = body.record;
+    message = body.date + " の記録を更新";
+  }
+
+  await ghPutFile(RECORDS_PATH, updated, message, file.sha, env);
+  return jsonResponse({ ok: true });
+}
+
+// 通知の購読情報(subscriptions.json)を保存する。endpointが同じものは重複させない。
+async function handleSubscribe(body, env) {
+  if (!body.subscription || !body.subscription.endpoint) {
+    return jsonResponse({ ok: false, error: "no subscription" }, 400);
+  }
+  const file = await ghGetFile(SUBS_PATH, env);
+  const list = Array.isArray(file.json) ? file.json : [];
+
+  const exists = list.some((s) => s.endpoint === body.subscription.endpoint);
+  if (!exists) list.push(body.subscription);
+
+  await ghPutFile(SUBS_PATH, list, "通知の購読を追加", file.sha, env);
+  return jsonResponse({ ok: true, count: list.length });
+}
+
+// --- GitHub ファイル操作 ---
+
+function ghUrl(path) {
+  return `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${path}`;
+}
+function ghHeaders(env) {
+  return {
+    "Authorization": `Bearer ${env.GH_TOKEN}`,
+    "Accept": "application/vnd.github+json",
+    "Content-Type": "application/json",
+    "User-Agent": "fitness-proxy-worker",
+  };
+}
+
+// ファイルを取得。存在しなければ {json:null, sha:null} を返す
+async function ghGetFile(path, env) {
+  const res = await fetch(ghUrl(path), { headers: ghHeaders(env) });
+  if (res.status === 404) return { json: null, sha: null };
+  if (!res.ok) throw new Error("github get failed: " + res.status);
+  const file = await res.json();
+  return { json: JSON.parse(decodeBase64(file.content)), sha: file.sha };
+}
+
+// ファイルを書き込む。shaがnullなら新規作成、あれば更新
+async function ghPutFile(path, obj, message, sha, env) {
+  const payload = {
+    message,
+    content: encodeBase64(JSON.stringify(obj, null, 2)),
+  };
+  if (sha) payload.sha = sha;
+  const res = await fetch(ghUrl(path), {
+    method: "PUT",
+    headers: ghHeaders(env),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error("github put failed: " + res.status);
+}
 
 function corsHeaders() {
   return {

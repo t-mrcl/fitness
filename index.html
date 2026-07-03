@@ -5,6 +5,12 @@
 <!-- スマホで見やすくするための設定。画面幅に合わせて拡大縮小する -->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>健康記録</title>
+<!-- ホーム画面に追加してアプリ化するための設定 -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#2fa37a">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="健康記録">
 <style>
   /* ============================================================
      見た目（CSS）。色や配置をここでまとめて決めています。
@@ -171,6 +177,13 @@
     <div id="history"></div>
   </div>
 
+  <!-- ============ リマインダー ============ -->
+  <div class="card">
+    <h2>リマインダー <span class="tag">入力忘れを防ぐ</span></h2>
+    <button class="btn ghost" id="notifyBtn">通知をオンにする</button>
+    <p class="note" id="notifyNote">毎日午前1時に、その日の記録がまだなければ通知でお知らせします。iPhoneでは、この画面を「ホーム画面に追加」してから開き直すとこのボタンが使えます。</p>
+  </div>
+
   <!-- ============ バックアップ ============ -->
   <div class="card">
     <h2>バックアップ <span class="tag">大事なデータを守る</span></h2>
@@ -205,6 +218,8 @@ const SCHEMA_VERSION = 2;
 // 本物のGitHubトークンはWorker側にしか置かないため、ここには軽い合言葉だけを置く
 const WORKER_URL = "https://fitness-proxy.tamura-fitness.workers.dev";
 const APP_TOKEN = "fitness-tamura";
+// プッシュ通知の公開鍵（公開してOK。対になる秘密鍵はWorker側にのみ置く）
+const VAPID_PUBLIC_KEY = "BIpRyt-0tdoFwdFHkOnTJffYSmOERAaFjVDSZjGD2F9AAlD5w75qm04MLSWl9RNlifj5Ep3J0aGXXF3mZJbQ8n8";
 
 // 運動の種目リスト（idは保存用、labelは表示用）
 const EXERCISES = [
@@ -555,6 +570,66 @@ function showToast(msg){
   toastTimer = setTimeout(()=> t.classList.remove("show"), 1800);
 }
 
+// --- プッシュ通知（リマインダー）の設定 ---
+
+// VAPID公開鍵（文字列）を、購読APIが要求するバイト列の形に変換する
+function urlBase64ToUint8Array(base64String){
+  const padding = "=".repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g,"+").replace(/_/g,"/");
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+// 「通知をオンにする」ボタンの処理
+async function enableNotifications(){
+  // iOSでは「ホーム画面に追加」したアプリから開かないと、これらの機能が使えない
+  if(!("serviceWorker" in navigator) || !("PushManager" in window) || typeof Notification === "undefined"){
+    showToast("先に『ホーム画面に追加』し、追加したアプリから開いてください");
+    return;
+  }
+  try{
+    const reg = await navigator.serviceWorker.register("sw.js");
+    const perm = await Notification.requestPermission();
+    if(perm !== "granted"){ showToast("通知が許可されませんでした"); return; }
+
+    // 既存の購読があれば使い回し、なければ新規購読
+    let sub = await reg.pushManager.getSubscription();
+    if(!sub){
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+    }
+
+    // 購読情報をWorkerに保存（この端末に通知を送れるようにする）
+    const res = await fetch(WORKER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: APP_TOKEN, mode: "subscribe", subscription: sub }),
+    });
+    if(!res.ok) throw new Error("購読の保存に失敗: " + res.status);
+
+    showToast("通知をオンにしました");
+    refreshNotifyState();
+  }catch(err){
+    showToast("通知の設定に失敗しました");
+  }
+}
+
+// 現在の通知状態をボタンに反映する
+async function refreshNotifyState(){
+  try{
+    if(!("serviceWorker" in navigator) || typeof Notification === "undefined") return;
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg ? await reg.pushManager.getSubscription() : null;
+    if(Notification.permission === "granted" && sub){
+      $("notifyBtn").textContent = "通知はオンです（設定し直す）";
+    }
+  }catch(e){ /* 対応していない端末では何もしない */ }
+}
+
 // --- 起動時の処理 ---
 buildForm();
 renderGuide();
@@ -571,6 +646,13 @@ dateEl.value = todayStr();
 dateEl.onchange = () => loadDateIntoForm(dateEl.value);
 $("saveBtn").onclick = save;
 $("exportBtn").onclick = exportCSV;
+$("notifyBtn").onclick = enableNotifications;
+
+// Service Workerを起動時にも登録しておく（通知を受け取れる状態を保つ）
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("sw.js").catch(()=>{});
+}
+refreshNotifyState();
 </script>
 </body>
 </html>
