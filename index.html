@@ -299,9 +299,15 @@ async function migrateStorageIfNeeded(){
   }
 }
 
-// 今日の日付を "YYYY-MM-DD" の形で返す（端末の時刻を使用）
+// 「1日の区切り」を朝5時に設定。深夜〜早朝（0〜4時台）の入力は前日扱いにする。
+// 夜型の生活で深夜に前日分を記録しても、正しい日付に自動で振り分けるための工夫。
+// この基準を変えたいときはこの数字だけ変更する（例: 4 にすれば朝4時が境界）。
+const DAY_BOUNDARY_HOUR = 5;
+
+// 今の「論理的な日付」を "YYYY-MM-DD" の形で返す（朝5時より前なら前日の日付を返す）
 function todayStr(){
   const d = new Date();
+  if(d.getHours() < DAY_BOUNDARY_HOUR) d.setDate(d.getDate() - 1); // 早朝はまだ前日扱い
   const p = (n) => String(n).padStart(2,"0");
   return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
 }
