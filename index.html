@@ -194,12 +194,14 @@
 // 保存に使う名前（バージョン管理のため v1 を付けています）
 const STORE_KEY = "kenko_records_v1";
 
-// GitHub上のデータ保管リポジトリ（非公開）への設定
-const GH_OWNER = "t-mrcl";
-const GH_REPO = "fitness-data";
-const GH_PATH = "records.json";
-// Fine-grained personal access token（fitness-dataリポジトリのContents読み書き権限のみ）をここに貼り付ける
-const GH_TOKEN = "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";
+// 記録データの構造バージョン。項目を追加するだけならここは変えなくてOK。
+// 既存項目の意味・範囲・向きが変わるなど、古いデータの変換が必要な変更をした時だけ上げる。
+const SCHEMA_VERSION = 2;
+
+// 中継サーバー(Cloudflare Worker)への設定
+// 本物のGitHubトークンはWorker側にしか置かないため、ここには軽い合言葉だけを置く
+const WORKER_URL = "https://fitness-proxy.tamura-fitness.workers.dev";
+const APP_TOKEN = "fitness-tamura";
 
 // 運動の種目リスト（idは保存用、labelは表示用）
 const EXERCISES = [
@@ -216,11 +218,13 @@ const EXERCISES = [
 // 有酸素運動の時間の選択肢（分）
 const AERO_OPTIONS = [0, 20, 30, 40, 60];
 
-// 採点スライダーの定義。0〜5で採点します。
+// 採点スライダーの定義。0〜10の11段階で採点します。
+// すべての項目で「左＝楽な状態」「右＝ツラい状態」に統一しています。
 const SCORES = [
-  { id:"belly",    name:"お腹スリム感", low:"ぽっこり", high:"スッキリ", def:3 },
-  { id:"posture",  name:"姿勢",         low:"猫背がひどい", high:"背筋が伸びている", def:3 },
+  { id:"belly",    name:"お腹スリム感", low:"スッキリ", high:"ぽっこり", def:5 },
+  { id:"posture",  name:"姿勢",         low:"背筋が伸びている", high:"猫背がひどい", def:5 },
   { id:"headache", name:"頭痛",         low:"なし", high:"かなりつらい", def:0 },
+  { id:"fatigue",  name:"疲労感",       low:"楽", high:"かなりつらい", def:0 },
 ];
 
 // 運動ガイドの説明文（調べた内容を反映）
@@ -250,6 +254,46 @@ function loadAll(){
   catch(e){ return {}; }
 }
 function saveAll(obj){ localStorage.setItem(STORE_KEY, JSON.stringify(obj)); }
+
+// 古いバージョンのレコードを、今のバージョンの形に変換する
+// (schemaVersionが無いものは v1 とみなす)
+function migrateRecord(record){
+  const r = Object.assign({}, record);
+  const fromVersion = r.schemaVersion || 1;
+  const sc = Object.assign({}, r.scores);
+
+  if(fromVersion < 2){
+    // v1→v2: 採点を0〜5→0〜10に拡張し、「お腹スリム感」「姿勢」は
+    // 左=楽・右=ツラいに統一するため向きを反転する（頭痛はそのままの向きなので2倍のみ）
+    if(sc.belly   !== undefined) sc.belly   = (5 - sc.belly) * 2;
+    if(sc.posture !== undefined) sc.posture = (5 - sc.posture) * 2;
+    if(sc.headache !== undefined) sc.headache = sc.headache * 2;
+  }
+
+  r.scores = sc;
+  r.schemaVersion = SCHEMA_VERSION;
+  return r;
+}
+
+// 保存されている全レコードのうち、古いバージョンのものがあれば変換し、
+// 変換が発生した場合はローカル・GitHubの両方に変換後の内容を反映する
+async function migrateStorageIfNeeded(){
+  const all = loadAll();
+  let changed = false;
+
+  Object.keys(all).forEach(dt => {
+    const current = all[dt].schemaVersion || 1;
+    if(current < SCHEMA_VERSION){
+      all[dt] = migrateRecord(all[dt]);
+      changed = true;
+    }
+  });
+
+  if(changed){
+    saveAll(all);
+    await syncAllToGitHub(all);
+  }
+}
 
 // 今日の日付を "YYYY-MM-DD" の形で返す（端末の時刻を使用）
 function todayStr(){
@@ -289,7 +333,7 @@ function buildForm(){
     wrap.innerHTML =
       '<div class="slider-top"><span class="name">'+s.name+'</span>'+
       '<span class="val" id="val_'+s.id+'"></span></div>'+
-      '<input type="range" min="0" max="5" step="1" id="rng_'+s.id+'">'+
+      '<input type="range" min="0" max="10" step="1" id="rng_'+s.id+'">'+
       '<div class="ends"><span>'+s.low+'</span><span>'+s.high+'</span></div>';
     slidersEl.appendChild(wrap);
     const rng = $("rng_"+s.id);
@@ -343,6 +387,7 @@ function save(){
     aeroMin: state.aeroMin,
     scores: state.scores,
     savedAt: new Date().toISOString(),
+    schemaVersion: SCHEMA_VERSION,
   };
   all[dateStr] = record;
   saveAll(all); // 端末への保存はここで完了（クラウド送信が失敗しても記録は残る）
@@ -353,52 +398,36 @@ function save(){
   renderHistory();
 }
 
-// GitHubの非公開リポジトリ(records.json)に記録を反映する（あくまでベストエフォート。失敗しても端末の記録は消えない）
+// 中継サーバー(Worker)経由で、この日の記録を反映する（あくまでベストエフォート。失敗しても端末の記録は消えない）
 async function syncToGitHub(dateStr, record){
-  if(!GH_TOKEN || GH_TOKEN.indexOf("ここに") === 0) return; // トークン未設定なら何もしない
+  if(!WORKER_URL || WORKER_URL.indexOf("ここに") === 0) return; // 未設定なら何もしない
 
   try{
-    const url = "https://api.github.com/repos/"+GH_OWNER+"/"+GH_REPO+"/contents/"+GH_PATH;
-
-    // 1. 現在のrecords.jsonの内容とsha（更新に必要な合言葉のようなもの）を取得
-    const getRes = await fetch(url, { headers: ghHeaders() });
-    if(!getRes.ok) throw new Error("取得に失敗: " + getRes.status);
-    const file = await getRes.json();
-    const current = JSON.parse(decodeBase64(file.content));
-
-    // 2. この日のデータを追加・上書き
-    current[dateStr] = record;
-
-    // 3. 更新後の内容をコミット
-    const putRes = await fetch(url, {
-      method: "PUT",
-      headers: ghHeaders(),
-      body: JSON.stringify({
-        message: dateStr + " の記録を更新",
-        content: encodeBase64(JSON.stringify(current, null, 2)),
-        sha: file.sha,
-      }),
+    const res = await fetch(WORKER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: APP_TOKEN, mode: "merge", date: dateStr, record: record }),
     });
-    if(!putRes.ok) throw new Error("保存に失敗: " + putRes.status);
+    if(!res.ok) throw new Error("送信に失敗: " + res.status);
   }catch(err){
     setTimeout(() => showToast("クラウドへの送信に失敗しました（記録は端末に保存済み）"), 2000);
   }
 }
 
-function ghHeaders(){
-  return {
-    "Authorization": "Bearer " + GH_TOKEN,
-    "Accept": "application/vnd.github+json",
-    "Content-Type": "application/json",
-  };
-}
+// 中継サーバー(Worker)経由で、records.json全体を渡された内容でまるごと置き換える（データ構造の変換時などに使用）
+async function syncAllToGitHub(all){
+  if(!WORKER_URL || WORKER_URL.indexOf("ここに") === 0) return; // 未設定なら何もしない
 
-// 日本語を含むテキストをBase64に変換/復元するためのヘルパー（GitHub APIはファイル内容をBase64でやり取りするため）
-function encodeBase64(str){
-  return btoa(unescape(encodeURIComponent(str)));
-}
-function decodeBase64(b64){
-  return decodeURIComponent(escape(atob(b64.replace(/\n/g, ""))));
+  try{
+    const res = await fetch(WORKER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: APP_TOKEN, mode: "replace", all: all }),
+    });
+    if(!res.ok) throw new Error("送信に失敗: " + res.status);
+  }catch(err){
+    setTimeout(() => showToast("クラウドへのデータ変換反映に失敗しました（端末側は変換済み）"), 2000);
+  }
 }
 
 // --- 統計（連続記録・合計）を表示 ---
@@ -440,7 +469,7 @@ function renderHistory(){
     row.innerHTML =
       '<span class="d">'+fmtDate(dt)+'</span>'+
       '<span class="s">運動'+exCount+'種'+aero+
-        '　お腹'+val(sc.belly)+'/姿勢'+val(sc.posture)+'/頭痛'+val(sc.headache)+'</span>'+
+        '　お腹'+val(sc.belly)+'/姿勢'+val(sc.posture)+'/頭痛'+val(sc.headache)+'/疲労'+val(sc.fatigue)+'</span>'+
       '<button class="del" data-d="'+dt+'">削除</button>';
     row.querySelector(".del").onclick = () => {
       if(confirm(fmtDate(dt)+" の記録を削除しますか？")){
@@ -470,14 +499,14 @@ function exportCSV(){
   const all = loadAll();
   const dates = Object.keys(all).sort();
   // 見出し行
-  const head = ["日付", ...EXERCISES.map(e=>e.label), "有酸素運動(分)", "お腹スリム感", "姿勢", "頭痛"];
+  const head = ["日付", ...EXERCISES.map(e=>e.label), "有酸素運動(分)", "お腹スリム感", "姿勢", "頭痛", "疲労感"];
   const rows = [head];
   dates.forEach(dt => {
     const r = all[dt];
     const row = [dt];
     EXERCISES.forEach(e => row.push(r.exercises && r.exercises[e.id] ? 1 : 0));
     row.push(r.aeroMin || 0);
-    row.push(v(r.scores,"belly"), v(r.scores,"posture"), v(r.scores,"headache"));
+    row.push(v(r.scores,"belly"), v(r.scores,"posture"), v(r.scores,"headache"), v(r.scores,"fatigue"));
     rows.push(row);
   });
   const csv = rows.map(r => r.join(",")).join("\r\n");
@@ -503,9 +532,13 @@ function showToast(msg){
 buildForm();
 renderGuide();
 dateEl.value = todayStr();
-loadDateIntoForm(dateEl.value);
-renderStats();
-renderHistory();
+
+(async () => {
+  await migrateStorageIfNeeded(); // 古い形式のデータがあれば先に変換しておく
+  loadDateIntoForm(dateEl.value);
+  renderStats();
+  renderHistory();
+})();
 
 // 日付を変えたら、その日の記録を読み込む
 dateEl.onchange = () => loadDateIntoForm(dateEl.value);
