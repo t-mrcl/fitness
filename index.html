@@ -152,6 +152,9 @@
     <div class="field-label" style="margin-top:16px;">有酸素運動の時間（ウォーキング等）</div>
     <div class="chips" id="aeroChips"></div>
 
+    <!-- 睡眠時間 -->
+    <div id="sleepBlock" style="margin-top:16px;"></div>
+
     <!-- 採点スライダー -->
     <div style="margin-top:22px;">
       <div class="field-label" style="margin-bottom:8px;">今日の調子を採点（指でスライド）</div>
@@ -244,9 +247,10 @@ const GUIDE = [
 const $ = (id) => document.getElementById(id);
 const dateEl = $("date"), exGrid = $("exGrid"), aeroChips = $("aeroChips");
 const slidersEl = $("sliders"), historyEl = $("history"), guideEl = $("guide");
+const sleepBlock = $("sleepBlock");
 
 // 今この瞬間の状態を持っておく変数
-let state = { exercises:{}, aeroMin:0, scores:{} };
+let state = { exercises:{}, aeroMin:0, sleepHours:0, scores:{} };
 
 // --- データの読み書き ---
 function loadAll(){
@@ -325,6 +329,17 @@ function buildForm(){
     aeroChips.appendChild(c);
   });
 
+  // 睡眠時間スライダー（0〜15時間・1時間刻み）
+  sleepBlock.innerHTML =
+    '<div class="slider-block" style="margin-bottom:0;">'+
+      '<div class="slider-top"><span class="name">睡眠時間（指でスライド）</span>'+
+      '<span class="val" id="val_sleep"></span></div>'+
+      '<input type="range" min="0" max="15" step="1" id="rng_sleep">'+
+      '<div class="ends"><span>0h</span><span>15h</span></div>'+
+    '</div>';
+  const rngSleep = $("rng_sleep");
+  rngSleep.oninput = () => { state.sleepHours = Number(rngSleep.value); $("val_sleep").textContent = rngSleep.value + "h"; };
+
   // 採点スライダー
   slidersEl.innerHTML = "";
   SCORES.forEach(s => {
@@ -353,12 +368,13 @@ function loadDateIntoForm(dateStr){
   const all = loadAll();
   const rec = all[dateStr];
   // 状態を初期化
-  state = { exercises:{}, aeroMin:0, scores:{} };
+  state = { exercises:{}, aeroMin:0, sleepHours:0, scores:{} };
   SCORES.forEach(s => state.scores[s.id] = s.def);
 
   if(rec){
     state.exercises = Object.assign({}, rec.exercises);
     state.aeroMin = rec.aeroMin || 0;
+    state.sleepHours = rec.sleepHours || 0;
     state.scores = Object.assign({}, state.scores, rec.scores);
   }
 
@@ -368,6 +384,8 @@ function loadDateIntoForm(dateStr){
     b.classList.toggle("on", !!state.exercises[ex.id]);
   });
   refreshAeroChips();
+  $("rng_sleep").value = state.sleepHours;
+  $("val_sleep").textContent = state.sleepHours + "h";
   SCORES.forEach(s => {
     $("rng_"+s.id).value = state.scores[s.id];
     $("val_"+s.id).textContent = state.scores[s.id];
@@ -385,6 +403,7 @@ function save(){
   const record = {
     exercises: state.exercises,
     aeroMin: state.aeroMin,
+    sleepHours: state.sleepHours,
     scores: state.scores,
     savedAt: new Date().toISOString(),
     schemaVersion: SCHEMA_VERSION,
@@ -464,11 +483,12 @@ function renderHistory(){
     const exCount = Object.values(rec.exercises||{}).filter(Boolean).length;
     const sc = rec.scores || {};
     const aero = rec.aeroMin ? "・有酸素"+rec.aeroMin+"分" : "";
+    const sleep = rec.sleepHours ? "・睡眠"+rec.sleepHours+"h" : "";
     const row = document.createElement("div");
     row.className = "rec";
     row.innerHTML =
       '<span class="d">'+fmtDate(dt)+'</span>'+
-      '<span class="s">運動'+exCount+'種'+aero+
+      '<span class="s">運動'+exCount+'種'+aero+sleep+
         '　お腹'+val(sc.belly)+'/姿勢'+val(sc.posture)+'/頭痛'+val(sc.headache)+'/疲労'+val(sc.fatigue)+'</span>'+
       '<button class="del" data-d="'+dt+'">削除</button>';
     row.querySelector(".del").onclick = () => {
@@ -499,13 +519,14 @@ function exportCSV(){
   const all = loadAll();
   const dates = Object.keys(all).sort();
   // 見出し行
-  const head = ["日付", ...EXERCISES.map(e=>e.label), "有酸素運動(分)", "お腹スリム感", "姿勢", "頭痛", "疲労感"];
+  const head = ["日付", ...EXERCISES.map(e=>e.label), "有酸素運動(分)", "睡眠時間(h)", "お腹スリム感", "姿勢", "頭痛", "疲労感"];
   const rows = [head];
   dates.forEach(dt => {
     const r = all[dt];
     const row = [dt];
     EXERCISES.forEach(e => row.push(r.exercises && r.exercises[e.id] ? 1 : 0));
     row.push(r.aeroMin || 0);
+    row.push(r.sleepHours || 0);
     row.push(v(r.scores,"belly"), v(r.scores,"posture"), v(r.scores,"headache"), v(r.scores,"fatigue"));
     rows.push(row);
   });
