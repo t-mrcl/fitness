@@ -651,6 +651,10 @@ $("notifyBtn").onclick = enableNotifications;
 // Service Workerを起動時にも登録しておく（通知を受け取れる状態を保つ）
 if("serviceWorker" in navigator){
   navigator.serviceWorker.register("sw.js").catch(()=>{});
+  // 通知タップで既存の画面が前面に出たとき、一番上（入力欄）へスクロールする
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if(e.data && e.data.type === "scrollTop") window.scrollTo({ top:0, behavior:"auto" });
+  });
 }
 refreshNotifyState();
 </script>

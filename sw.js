@@ -24,16 +24,19 @@ self.addEventListener("push", (event) => {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
-// 通知をタップしたとき：既に開いていれば前面に、なければ新しく開く
+// 通知をタップしたとき：既に開いていれば前面に出して一番上へ、なければ新しく開く
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const target = (event.notification.data && event.notification.data.url) || "./";
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
       for (const c of list) {
-        if ("focus" in c) return c.focus();
+        if ("focus" in c) {
+          c.postMessage({ type: "scrollTop" }); // ページに「一番上へ」と伝える
+          return c.focus();
+        }
       }
-      if (self.clients.openWindow) return self.clients.openWindow(target);
+      if (self.clients.openWindow) return self.clients.openWindow(target); // 新規で開く場合は元々一番上
     })
   );
 });

@@ -1,3 +1,7 @@
 name = "fitness-proxy"
 main = "index.js"
 compatibility_date = "2026-07-03"
+
+# 定時実行（cron）。CloudflareはUTC基準なので、16:00 UTC = 翌1:00 JST。
+[triggers]
+crons = ["0 16 * * *"]
