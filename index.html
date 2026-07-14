@@ -184,12 +184,6 @@
     <p class="note" id="notifyNote">毎日午前1時に、その日の記録がまだなければ通知でお知らせします。iPhoneでは、この画面を「ホーム画面に追加」してから開き直すとこのボタンが使えます。</p>
   </div>
 
-  <!-- ============ バックアップ ============ -->
-  <div class="card">
-    <h2>バックアップ <span class="tag">大事なデータを守る</span></h2>
-    <button class="btn ghost" id="exportBtn">CSVファイルに書き出す（Excelで開ける）</button>
-    <p class="note">ブラウザのデータを消すと記録も消えます。ときどきこのボタンでファイルに保存しておくと安心です。将来グラフを作るときにも使えます。</p>
-  </div>
 
   <!-- ============ 運動ガイド ============ -->
   <div class="card">
@@ -535,33 +529,6 @@ function renderGuide(){
   });
 }
 
-// --- CSVに書き出す（バックアップ） ---
-function exportCSV(){
-  const all = loadAll();
-  const dates = Object.keys(all).sort();
-  // 見出し行
-  const head = ["日付", ...EXERCISES.map(e=>e.label), "有酸素運動(分)", "睡眠時間(h)", "お腹スリム感", "姿勢", "頭痛", "疲労感"];
-  const rows = [head];
-  dates.forEach(dt => {
-    const r = all[dt];
-    const row = [dt];
-    EXERCISES.forEach(e => row.push(r.exercises && r.exercises[e.id] ? 1 : 0));
-    row.push(r.aeroMin || 0);
-    row.push(r.sleepHours || 0);
-    row.push(v(r.scores,"belly"), v(r.scores,"posture"), v(r.scores,"headache"), v(r.scores,"fatigue"));
-    rows.push(row);
-  });
-  const csv = rows.map(r => r.join(",")).join("\r\n");
-  // Excelでも日本語が文字化けしないよう BOM（先頭の目印）を付ける
-  const blob = new Blob(["﻿"+csv], { type:"text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = "健康記録_"+todayStr()+".csv";
-  a.click(); URL.revokeObjectURL(url);
-  showToast("CSVを書き出しました");
-}
-function v(o,k){ return (o && o[k]!==undefined) ? o[k] : ""; }
-
 // --- お知らせ表示 ---
 let toastTimer;
 function showToast(msg){
@@ -645,7 +612,6 @@ dateEl.value = todayStr();
 // 日付を変えたら、その日の記録を読み込む
 dateEl.onchange = () => loadDateIntoForm(dateEl.value);
 $("saveBtn").onclick = save;
-$("exportBtn").onclick = exportCSV;
 $("notifyBtn").onclick = enableNotifications;
 
 // Service Workerを起動時にも登録しておく（通知を受け取れる状態を保つ）
