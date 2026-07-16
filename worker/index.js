@@ -119,10 +119,34 @@ async function sendReminderIfNeeded(env, force) {
   return { sent, total: subs.length, date: today, forced: !!force };
 }
 
-// 記録データ(records.json)の追加・上書き・全置換
+// 記録データ(records.json)の追加・上書き・全置換・統合
 async function handleRecords(body, env) {
   const file = await ghGetFile(RECORDS_PATH, env);
   const current = file.json || {};
+
+  // 端末の全データ(body.all)をクラウドの既存データと「統合」する。
+  // ・クラウドに無い日は追加する
+  // ・両方にある日は savedAt(保存時刻)が新しい方を採用する
+  // ・クラウドにしか無い日は絶対に消さない（データ消失を防ぐ）
+  // 統合後の全データを返し、端末側にも取り込ませる（双方向同期）。
+  if (body.mode === "mergeall") {
+    const incoming = (body.all && typeof body.all === "object") ? body.all : {};
+    const merged = Object.assign({}, current);
+    let changed = false;
+    for (const date in incoming) {
+      const cloud = merged[date];
+      const local = incoming[date];
+      // クラウド側にこの日が無い、または端末側の保存時刻が新しければ端末側を採用
+      const localNewer = !cloud || !cloud.savedAt || (local.savedAt && local.savedAt >= cloud.savedAt);
+      if (localNewer && JSON.stringify(cloud) !== JSON.stringify(local)) {
+        merged[date] = local;
+        changed = true;
+      }
+    }
+    // 中身が変わったときだけ書き込む（無駄なコミットを避ける）
+    if (changed) await ghPutFile(RECORDS_PATH, merged, "端末のデータをクラウドへ統合", file.sha, env);
+    return jsonResponse({ ok: true, records: merged, changed });
+  }
 
   let updated, message;
   if (body.mode === "replace") {

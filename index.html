@@ -464,6 +464,35 @@ async function syncAllToGitHub(all){
   }
 }
 
+// 起動時に端末とクラウドを突き合わせる（双方向同期）。
+// 端末の全データをWorkerへ送って統合し、返ってきた完全版を端末にも保存し直す。
+// これにより「送信に失敗して端末にしか無い日」がクラウドへ確実に届き、
+// 逆に「クラウドにしか無い日」も端末へ取り込まれる。あくまでベストエフォート。
+async function reconcileWithCloud(){
+  if(!WORKER_URL || WORKER_URL.indexOf("ここに") === 0) return false;
+  try{
+    const res = await fetch(WORKER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: APP_TOKEN, mode: "mergeall", all: loadAll() }),
+    });
+    if(!res.ok) throw new Error("同期に失敗: " + res.status);
+    const data = await res.json();
+    if(data && data.records){
+      const recs = data.records;
+      // 取り込むデータに古い形式が混ざっていたら今の形に変換してから保存
+      Object.keys(recs).forEach(dt => {
+        if((recs[dt].schemaVersion || 1) < SCHEMA_VERSION) recs[dt] = migrateRecord(recs[dt]);
+      });
+      saveAll(recs);
+      return true;
+    }
+  }catch(err){
+    // 通信できないときは何もしない（端末の記録はそのまま残る）
+  }
+  return false;
+}
+
 // --- 統計（連続記録・合計）を表示 ---
 function renderStats(){
   const all = loadAll();
@@ -604,6 +633,7 @@ dateEl.value = todayStr();
 
 (async () => {
   await migrateStorageIfNeeded(); // 古い形式のデータがあれば先に変換しておく
+  await reconcileWithCloud();      // 端末⇄クラウドを突き合わせ、両者の記録を揃える
   loadDateIntoForm(dateEl.value);
   renderStats();
   renderHistory();
