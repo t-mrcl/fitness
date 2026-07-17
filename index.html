@@ -552,7 +552,9 @@ function renderHistory(){
     const sc = rec.scores || {};
     const aero = rec.aeroMin ? "・有酸素"+rec.aeroMin+"分" : "";
     const sleep = rec.sleepHours ? "・睡眠"+rec.sleepHours+"h" : "";
-    const weather = rec.weather ? "・気圧"+rec.weather.pressure+"hPa" : "";
+    const weather = rec.weather
+      ? "・気圧"+rec.weather.pressure+"hPa(最低"+rec.weather.pressureMin+"/変動"+rec.weather.pressureRange+")"
+      : "";
     const row = document.createElement("div");
     row.className = "rec";
     row.innerHTML =
