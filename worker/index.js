@@ -58,7 +58,7 @@ export default {
         const result = await sendReminderIfNeeded(env, body.force === true);
         return jsonResponse({ ok: true, ...result });
       }
-      return await handleRecords(body, env);
+      return await handleRecords(body, env, request);
     } catch (err) {
       return jsonResponse({ ok: false, error: String(err) }, 502);
     }
@@ -120,7 +120,7 @@ async function sendReminderIfNeeded(env, force) {
 }
 
 // 記録データ(records.json)の追加・上書き・全置換・統合
-async function handleRecords(body, env) {
+async function handleRecords(body, env, request) {
   const file = await ghGetFile(RECORDS_PATH, env);
   const current = file.json || {};
 
@@ -136,8 +136,10 @@ async function handleRecords(body, env) {
     for (const date in incoming) {
       const cloud = merged[date];
       const local = incoming[date];
-      // クラウド側にこの日が無い、または端末側の保存時刻が新しければ端末側を採用
-      const localNewer = !cloud || !cloud.savedAt || (local.savedAt && local.savedAt >= cloud.savedAt);
+      // クラウドにこの日が無い、または端末側の保存時刻が「厳密に新しい」ときだけ端末側を採用。
+      // 保存時刻が同じ（＝同じ保存）ならクラウド側を残す。これによりクラウドで後付けした
+      // 気圧などの情報が、端末からの統合で上書き消去されるのを防ぐ。
+      const localNewer = !cloud || !cloud.savedAt || (local.savedAt && local.savedAt > cloud.savedAt);
       if (localNewer && JSON.stringify(cloud) !== JSON.stringify(local)) {
         merged[date] = local;
         changed = true;
@@ -154,12 +156,49 @@ async function handleRecords(body, env) {
     message = "データ構造の変換を反映";
   } else {
     updated = current;
-    updated[body.date] = body.record;
+    const record = body.record;
+    // 「今日」の記録なら、その日の気圧を自動で付ける（頭痛との照合用）。
+    // 位置は接続元(request.cf)から推定。天気が取れなくても記録は必ず保存する（ベストエフォート）。
+    if (record && body.date === logicalTodayJST()) {
+      try {
+        const weather = await fetchWeather(body.date, request && request.cf);
+        if (weather) record.weather = weather;
+      } catch (e) { /* 気圧が取れなくても保存は続行 */ }
+    }
+    updated[body.date] = record;
     message = body.date + " の記録を更新";
   }
 
   await ghPutFile(RECORDS_PATH, updated, message, file.sha, env);
-  return jsonResponse({ ok: true });
+  return jsonResponse({ ok: true, record: updated[body.date] });
+}
+
+// 指定日の気圧を Open-Meteo(無料・鍵不要) から取得する。
+// 接続元の緯度経度(cf)をもとに、その日の平均・最低・変動幅(hPa)を返す。
+// 気圧の「変動幅」や急な低下は頭痛の引き金として知られているため、あわせて記録する。
+async function fetchWeather(dateStr, cf) {
+  const lat = cf && cf.latitude, lon = cf && cf.longitude;
+  if (!lat || !lon) return null;
+  const url = "https://api.open-meteo.com/v1/forecast"
+    + "?latitude=" + lat + "&longitude=" + lon
+    + "&hourly=pressure_msl&start_date=" + dateStr + "&end_date=" + dateStr
+    + "&timezone=Asia%2FTokyo";
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+  const arr = ((data.hourly && data.hourly.pressure_msl) || []).filter((x) => x != null);
+  if (arr.length === 0) return null;
+  const min = Math.min(...arr), max = Math.max(...arr);
+  const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+  const r1 = (n) => Math.round(n * 10) / 10;
+  return {
+    pressure: r1(mean),          // その日の平均海面気圧(hPa)
+    pressureMin: r1(min),        // その日の最低気圧
+    pressureRange: r1(max - min),// その日の変動幅（大きいほど気圧が荒れた日）
+    city: (cf && cf.city) || null,
+    lat: lat, lon: lon,
+    fetchedAt: new Date().toISOString(),
+  };
 }
 
 // 通知の購読情報(subscriptions.json)を保存する。endpointが同じものは重複させない。
