@@ -60,6 +60,7 @@
   }
   .badge{ font-size:12px; padding:3px 10px; border-radius:999px;
     background:var(--accent-weak); color:var(--accent); font-weight:600; }
+  .badge.weather-badge{ background:var(--line); color:var(--muted); font-weight:normal; margin-left:6px; }
 
   /* 統計（連続記録など） */
   .stats{ display:flex; gap:10px; }
@@ -148,6 +149,7 @@
     <div class="daterow" style="margin-bottom:16px;">
       <input type="date" id="date">
       <span class="badge" id="savedBadge" style="display:none;">記録済み</span>
+      <span class="badge weather-badge" id="weatherBadge" style="display:none;"></span>
     </div>
 
     <!-- 運動チェック -->
@@ -409,6 +411,17 @@ function loadDateIntoForm(dateStr){
   // 「記録済み」バッジと編集中タグ
   $("savedBadge").style.display = rec ? "inline-block" : "none";
   $("editTag").textContent = rec ? "（保存済みの記録を表示中・上書きできます）" : "";
+
+  // 気圧バッジ（保存時にWorkerが自動で付けた weather がある日だけ表示）
+  const weatherBadge = $("weatherBadge");
+  if(rec && rec.weather){
+    const w = rec.weather;
+    const rangeNote = w.pressureRange >= 5 ? "（変動大 "+w.pressureRange+"）" : "（変動"+w.pressureRange+"）";
+    weatherBadge.textContent = "気圧"+w.pressure+"hPa"+rangeNote;
+    weatherBadge.style.display = "inline-block";
+  } else {
+    weatherBadge.style.display = "none";
+  }
 }
 
 // --- 保存する ---
@@ -443,6 +456,17 @@ async function syncToGitHub(dateStr, record){
       body: JSON.stringify({ token: APP_TOKEN, mode: "merge", date: dateStr, record: record }),
     });
     if(!res.ok) throw new Error("送信に失敗: " + res.status);
+
+    // Workerが今日の記録に気圧(weather)を付けて返してくるので、端末側にも反映する。
+    // これにより保存した直後から気圧バッジが表示される（次回起動を待たない）。
+    const data = await res.json();
+    if(data && data.record && data.record.weather){
+      const all = loadAll();
+      all[dateStr] = data.record;
+      saveAll(all);
+      if(dateEl.value === dateStr) loadDateIntoForm(dateStr);
+      renderHistory();
+    }
   }catch(err){
     setTimeout(() => showToast("クラウドへの送信に失敗しました（記録は端末に保存済み）"), 2000);
   }
@@ -528,11 +552,12 @@ function renderHistory(){
     const sc = rec.scores || {};
     const aero = rec.aeroMin ? "・有酸素"+rec.aeroMin+"分" : "";
     const sleep = rec.sleepHours ? "・睡眠"+rec.sleepHours+"h" : "";
+    const weather = rec.weather ? "・気圧"+rec.weather.pressure+"hPa" : "";
     const row = document.createElement("div");
     row.className = "rec";
     row.innerHTML =
       '<span class="d">'+fmtDate(dt)+'</span>'+
-      '<span class="s">運動'+exCount+'種'+aero+sleep+
+      '<span class="s">運動'+exCount+'種'+aero+sleep+weather+
         '　お腹'+val(sc.belly)+'/姿勢'+val(sc.posture)+'/頭痛'+val(sc.headache)+'/疲労'+val(sc.fatigue)+'</span>'+
       '<button class="del" data-d="'+dt+'">削除</button>';
     row.querySelector(".del").onclick = () => {
