@@ -60,7 +60,24 @@
   }
   .badge{ font-size:12px; padding:3px 10px; border-radius:999px;
     background:var(--accent-weak); color:var(--accent); font-weight:600; }
-  .badge.weather-badge{ background:var(--line); color:var(--muted); font-weight:normal; margin-left:6px; }
+
+  /* 気圧パネル（今日の記録欄）。左に気圧計アイコン、右に平均・最低・変動を並べる。
+     変動幅の大きさに応じて枠の色味を変え、頭痛が出やすい「荒れた日」をひと目で分かるようにする。 */
+  .weather-panel{ display:flex; align-items:center; gap:12px; margin:0 0 16px;
+    padding:11px 14px; border-radius:12px; border:1px solid var(--line);
+    background:linear-gradient(135deg, var(--card), var(--accent-weak)); }
+  .weather-panel .wp-icon{ flex:none; width:34px; height:34px; color:var(--accent); opacity:.9; }
+  .weather-panel .wp-main{ display:flex; align-items:baseline; gap:4px; }
+  .weather-panel .wp-value{ font-size:22px; font-weight:700; letter-spacing:-.5px; }
+  .weather-panel .wp-unit{ font-size:12px; color:var(--muted); }
+  .weather-panel .wp-sub{ font-size:12px; color:var(--muted); margin-top:1px; }
+  .weather-panel .wp-tag{ display:inline-block; margin-left:6px; padding:1px 8px;
+    border-radius:999px; font-size:11px; font-weight:600; }
+  /* 変動レベル別の色 */
+  .weather-panel.wp-rough{ border-color:var(--danger); }
+  .weather-panel.wp-rough .wp-tag{ background:var(--danger); color:#fff; }
+  .weather-panel.wp-normal .wp-tag{ background:var(--accent-weak); color:var(--accent); }
+  .weather-panel.wp-calm .wp-tag{ background:var(--line); color:var(--muted); }
 
   /* 統計（連続記録など） */
   .stats{ display:flex; gap:10px; }
@@ -149,8 +166,10 @@
     <div class="daterow" style="margin-bottom:16px;">
       <input type="date" id="date">
       <span class="badge" id="savedBadge" style="display:none;">記録済み</span>
-      <span class="badge weather-badge" id="weatherBadge" style="display:none;"></span>
     </div>
+
+    <!-- 気圧パネル（その日の記録に気圧が付いていれば表示） -->
+    <div class="weather-panel" id="weatherPanel" style="display:none;"></div>
 
     <!-- 運動チェック -->
     <div class="field-label">やった運動をタップ</div>
@@ -412,15 +431,28 @@ function loadDateIntoForm(dateStr){
   $("savedBadge").style.display = rec ? "inline-block" : "none";
   $("editTag").textContent = rec ? "（保存済みの記録を表示中・上書きできます）" : "";
 
-  // 気圧バッジ（保存時にWorkerが自動で付けた weather がある日だけ表示）
-  const weatherBadge = $("weatherBadge");
+  // 気圧パネル（保存時にWorkerが自動で付けた weather がある日だけ表示）
+  const panel = $("weatherPanel");
   if(rec && rec.weather){
     const w = rec.weather;
-    const rangeNote = w.pressureRange >= 5 ? "（変動大 "+w.pressureRange+"）" : "（変動"+w.pressureRange+"）";
-    weatherBadge.textContent = "気圧"+w.pressure+"hPa"+rangeNote;
-    weatherBadge.style.display = "inline-block";
+    // 変動幅で「荒れ具合」を色分け。5hPa以上は頭痛が出やすい荒れた日として警告色にする。
+    const level = w.pressureRange >= 5 ? {cls:"wp-rough", tag:"荒れ気味"}
+                : w.pressureRange >= 3 ? {cls:"wp-normal", tag:"ふつう"}
+                : {cls:"wp-calm", tag:"穏やか"};
+    panel.className = "weather-panel " + level.cls;
+    panel.innerHTML =
+      // 気圧計（丸メーターに針）を表す簡単なSVGアイコン。外部画像を使わず自前で描く。
+      '<svg class="wp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+
+        '<circle cx="12" cy="12" r="9"></circle><path d="M12 12l4-3"></path><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"></circle>'+
+      '</svg>'+
+      '<div class="wp-body">'+
+        '<div class="wp-main"><span class="wp-value">'+w.pressure+'</span><span class="wp-unit">hPa（平均）</span></div>'+
+        '<div class="wp-sub">最低 '+w.pressureMin+'hPa ・ 変動 '+w.pressureRange+'hPa'+
+          '<span class="wp-tag">'+level.tag+'</span></div>'+
+      '</div>';
+    panel.style.display = "flex";
   } else {
-    weatherBadge.style.display = "none";
+    panel.style.display = "none";
   }
 }
 
